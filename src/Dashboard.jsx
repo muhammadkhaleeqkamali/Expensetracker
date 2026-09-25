@@ -261,6 +261,12 @@ const PAYMENT_MODE_LIMIT = 150000; // Credit Card only — Petty Cash is now tra
 // from there.
 const PETTY_CASH_BASELINE_BALANCE = 239222;
 const PETTY_CASH_BASELINE_DATE = "2026-09-14";
+// Petty cash activity from the imported ledger (Jul 1 – Sep 14, 2026), so the Petty Cash card
+// shows real Spent figures instead of starting from zero at the baseline:
+//   Opening balance on Jul 1 + cash received − spent = PETTY_CASH_BASELINE_BALANCE.
+const PETTY_LEDGER_RECEIVED = STATIC_HISTORY.filter((h) => h.type === "inflow").reduce((s, h) => s + Number(h.amount || 0), 0);
+const PETTY_LEDGER_SPENT = STATIC_HISTORY.filter((h) => h.type === "expense").reduce((s, h) => s + Number(h.amount || 0), 0);
+const PETTY_LEDGER_OPENING = PETTY_CASH_BASELINE_BALANCE - PETTY_LEDGER_RECEIVED + PETTY_LEDGER_SPENT;
 
 // Added By options
 const ADDED_BY_OPTIONS = ["Shahbaz Ahmed", "Ahsan Hussain", "Ali Turab", "Khaleeq Kamali", "Finance"];
@@ -781,9 +787,14 @@ function DashboardApp({ authedUser, authRole, onLogout }) {
         const newUsed = expenses
           .filter((e) => e.mode === mode && !String(e.id).startsWith("hist_"))
           .reduce((s, e) => s + Number(e.amount || 0), 0);
-        const opening = PETTY_CASH_BASELINE_BALANCE + toppedUp;
-        const remaining = opening - newUsed;
-        return { mode, limit: opening, used: newUsed, remaining, toppedUp, utilization: pct(newUsed, opening), over: remaining < 0, isBalance: true };
+        // Total cash available since Jul 1 = opening balance + cash received (ledger) + app top-ups.
+        const totalCash = PETTY_LEDGER_OPENING + PETTY_LEDGER_RECEIVED + toppedUp;
+        const used = PETTY_LEDGER_SPENT + newUsed;
+        const remaining = totalCash - used; // = baseline balance + top-ups − new spend
+        return {
+          mode, limit: totalCash, used, remaining, toppedUp, utilization: pct(used, totalCash), over: remaining < 0, isBalance: true,
+          opening: PETTY_LEDGER_OPENING, received: PETTY_LEDGER_RECEIVED, ledgerSpent: PETTY_LEDGER_SPENT, newUsed,
+        };
       }
 
       const limit = PAYMENT_MODE_LIMIT + toppedUp;
@@ -1161,7 +1172,7 @@ function DashboardView({ totals, headerStats, overBudgetHeaders, expenses, heade
                     {p.over && <Badge tone="red">{p.isBalance ? "Cash Short" : "Over Limit"}</Badge>}
                   </div>
                   <div className="space-y-1 text-xs">
-                    <div className="flex justify-between"><span style={{ color: C.muted }}>{p.isBalance ? "Opening Balance" : "Limit"}</span><span className="font-semibold" style={{ color: C.text }}>{fmtPKR(p.limit)}</span></div>
+                    <div className="flex justify-between"><span style={{ color: C.muted }}>{p.isBalance ? "Total Cash (since 1 Jul)" : "Limit"}</span><span className="font-semibold" style={{ color: C.text }}>{fmtPKR(p.limit)}</span></div>
                     <div className="flex justify-between"><span style={{ color: C.muted }}>Spent</span><span className="font-semibold" style={{ color: C.text }}>{fmtPKR(p.used)}</span></div>
                     <div className="flex justify-between"><span style={{ color: C.muted }}>{p.isBalance ? "Available Balance" : "Remaining"}</span><span className="font-semibold" style={{ color: p.remaining < 0 ? C.red : C.green }}>{fmtPKR(p.remaining)}</span></div>
                   </div>
@@ -1538,11 +1549,25 @@ function PaymentModeModal({ mode, stats, expenses, headerNameById, onClose, onTo
       <div className="flex items-center gap-6 mb-5 flex-wrap">
         <Gauge percent={stats.utilization} size={120} stroke={11} over={stats.over} />
         <div className="flex-1 min-w-[180px] space-y-2 text-sm">
-          <div className="flex justify-between"><span style={{ color: C.muted }}>{stats.isBalance ? "Opening Balance" : "Limit"}</span><span className="font-semibold" style={{ color: C.text }}>{fmtPKR(stats.limit)}</span></div>
+          {stats.isBalance ? (
+            <>
+              <div className="flex justify-between"><span style={{ color: C.muted }}>Opening Balance (1 Jul 2026)</span><span className="font-semibold" style={{ color: C.text }}>{fmtPKR(stats.opening)}</span></div>
+              <div className="flex justify-between"><span style={{ color: C.muted }}>Cash Received (1 Jul – 14 Sep)</span><span className="font-semibold" style={{ color: C.green }}>+{fmtPKR(stats.received)}</span></div>
+            </>
+          ) : (
+            <div className="flex justify-between"><span style={{ color: C.muted }}>Limit</span><span className="font-semibold" style={{ color: C.text }}>{fmtPKR(stats.limit)}</span></div>
+          )}
           {stats.toppedUp > 0 && (
             <div className="flex justify-between"><span style={{ color: C.muted }}>Topped Up</span><span className="font-semibold" style={{ color: C.green }}>+{fmtPKR(stats.toppedUp)}</span></div>
           )}
-          <div className="flex justify-between"><span style={{ color: C.muted }}>Spent</span><span className="font-semibold" style={{ color: C.text }}>{fmtPKR(stats.used)}</span></div>
+          {stats.isBalance ? (
+            <>
+              <div className="flex justify-between"><span style={{ color: C.muted }}>Spent (petty cash sheet, 1 Jul – 14 Sep)</span><span className="font-semibold" style={{ color: C.text }}>{fmtPKR(stats.ledgerSpent)}</span></div>
+              <div className="flex justify-between"><span style={{ color: C.muted }}>Spent (added in app)</span><span className="font-semibold" style={{ color: C.text }}>{fmtPKR(stats.newUsed)}</span></div>
+            </>
+          ) : (
+            <div className="flex justify-between"><span style={{ color: C.muted }}>Spent</span><span className="font-semibold" style={{ color: C.text }}>{fmtPKR(stats.used)}</span></div>
+          )}
           <div className="flex justify-between"><span style={{ color: C.muted }}>{stats.isBalance ? "Available Balance" : "Remaining"}</span><span className="font-semibold" style={{ color: stats.remaining < 0 ? C.red : C.green }}>{fmtPKR(stats.remaining)}</span></div>
           <div className="flex justify-between"><span style={{ color: C.muted }}>Entries</span><span className="font-semibold" style={{ color: C.text }}>{expenses.length}</span></div>
         </div>
