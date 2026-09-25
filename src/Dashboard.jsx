@@ -176,6 +176,9 @@ const SEGMENT_BUDGETS = {
     "Other Expenses": { budget: 6000, priorExhausted: 0 },
     "Daily meals": { budget: 400000, priorExhausted: 0 },
   },
+  "OTHERS": {
+    "Other Expenses": { budget: 0, priorExhausted: 0 },
+  },
   "REPAIRS & MAINTENANCE": {
     "Building": { budget: 0, priorExhausted: 0 },
     "General Maintenance": { budget: 0, priorExhausted: 0 },
@@ -193,6 +196,7 @@ const SEED_HEADERS = [
   { id: "h2", name: "OFFICE SUPPLIES", budget: sumSegmentBudgets("OFFICE SUPPLIES"), startDate: "2026-07-20", endDate: "", status: "Active" },
   { id: "h3", name: "MISCELLANEOUS", budget: sumSegmentBudgets("MISCELLANEOUS"), startDate: "2026-07-20", endDate: "", status: "Active" },
   { id: "h4", name: "REPAIRS & MAINTENANCE", budget: sumSegmentBudgets("REPAIRS & MAINTENANCE"), startDate: "2026-07-20", endDate: "", status: "Active" },
+  { id: "h6", name: "OTHERS", budget: 0, startDate: "2026-07-20", endDate: "", status: "Active" },
 ];
 
 // Segment (sub-category) options per Budget Header — matches the Google Sheet's row structure.
@@ -200,6 +204,7 @@ const SEGMENTS_BY_HEADER = {
   "REFRESHMENTS (TEA, COFFEE, ETC.)": ["Supplies - PK", "Vending machines rent"],
   "OFFICE SUPPLIES": ["Janitorial expenses", "Kitchen expenses", "Office supplies", "Drinking water"],
   "MISCELLANEOUS": ["Postage and Delivery", "Stationery", "Printing and Reproduction", "Fare allowance", "Entertainment", "Other Expenses", "Daily meals"],
+  "OTHERS": ["Other Expenses"],
   "REPAIRS & MAINTENANCE": ["Building", "General Maintenance", "R&M - AC and Appliances", "R&M - Electronics (LEDs, etc.)", "R&M - Furnitures and Fixtures", "R&M - Equipments Admin"],
 };
 const DEFAULT_SEGMENTS = ["General"];
@@ -209,7 +214,7 @@ const segmentsForHeader = (headerName) => SEGMENTS_BY_HEADER[headerName] || DEFA
 // Budget / Used (prior-exhausted + app-tracked) / Remaining — matching the sheet's columns.
 // Budget Headers with no allocated budget — we only track the amount spent (and report it to
 // Finance), so no remaining / utilization / over-budget warnings are shown for them.
-const NO_BUDGET_HEADER_IDS = new Set(["h4"]); // h4 = REPAIRS & MAINTENANCE
+const NO_BUDGET_HEADER_IDS = new Set(["h4", "h6"]); // h4 = REPAIRS & MAINTENANCE, h6 = OTHERS (no budget set yet)
 const isNoBudgetHeader = (id) => NO_BUDGET_HEADER_IDS.has(id);
 
 function getSegmentBreakdown(headerName, headerId, expenses) {
@@ -341,7 +346,7 @@ const SEED_EXPENSES = HISTORICAL_EXPENSES;
 const STORAGE_KEY = "wsbd-app-data-v2";
 // Bump this whenever historicalExpenses.js is re-imported. On load, saved "hist_" entries are
 // swapped for the fresh import while anything added through the app is kept.
-const HIST_VERSION = "2026-09-15-procurement2";
+const HIST_VERSION = "2026-09-25-others-header";
 // Budget Headers that were removed from the dashboard; dropped from saved browser data on load.
 const REMOVED_HEADER_IDS = new Set(["h5"]); // h5 = UTILITIES
 
@@ -607,13 +612,16 @@ function DashboardApp({ authedUser, authRole, onLogout }) {
         const parsed = JSON.parse(raw);
         if (parsed.headers?.length) {
           const versionChanged = parsed.histVersion !== HIST_VERSION;
-          setHeaders(parsed.headers.filter((h) => !REMOVED_HEADER_IDS.has(h.id)).map((h) => {
+          const kept = parsed.headers.filter((h) => !REMOVED_HEADER_IDS.has(h.id)).map((h) => {
             if (isNoBudgetHeader(h.id)) return { ...h, budget: 0 };
             // When the built-in budgets are updated, re-sync the standard headers' budget
             // from SEGMENT_BUDGETS so saved browsers pick up the new figures.
             const seed = SEED_HEADERS.find((sh) => sh.id === h.id);
             return versionChanged && seed ? { ...h, budget: seed.budget } : h;
-          }));
+          });
+          // Add any new built-in headers (e.g. OTHERS) that this browser's saved data doesn't have yet.
+          const missing = SEED_HEADERS.filter((sh) => !kept.some((h) => h.id === sh.id || h.name.trim().toUpperCase() === sh.name));
+          setHeaders([...kept, ...missing]);
         }
         if (parsed.expenses) {
           if (parsed.histVersion === HIST_VERSION) {
