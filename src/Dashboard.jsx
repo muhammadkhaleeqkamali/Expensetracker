@@ -352,7 +352,7 @@ const SEED_EXPENSES = HISTORICAL_EXPENSES;
 const STORAGE_KEY = "wsbd-app-data-v2";
 // Bump this whenever historicalExpenses.js is re-imported. On load, saved "hist_" entries are
 // swapped for the fresh import while anything added through the app is kept.
-const HIST_VERSION = "2026-09-25-others-header";
+const HIST_VERSION = "2026-09-25-topup-cleanup";
 // Budget Headers that were removed from the dashboard; dropped from saved browser data on load.
 const REMOVED_HEADER_IDS = new Set(["h5"]); // h5 = UTILITIES
 
@@ -637,7 +637,14 @@ function DashboardApp({ authedUser, authRole, onLogout }) {
             setExpenses([...HISTORICAL_EXPENSES, ...appAdded]);
           }
         }
-        if (parsed.topUps) setTopUps(parsed.topUps);
+        if (parsed.topUps) {
+          // One-time cleanup: remove the Rs 1,171,000 demo Petty Cash top-up (it duplicated the
+          // cash already received per the petty cash sheet).
+          const cleaned = parsed.histVersion === HIST_VERSION
+            ? parsed.topUps
+            : parsed.topUps.filter((t) => !(t.mode === "Petty Cash" && Number(t.amount) === 1171000));
+          setTopUps(cleaned);
+        }
         if (parsed.buBudgets) setBuBudgets((b) => ({ ...b, ...parsed.buBudgets }));
       }
     } catch (e) {
@@ -805,10 +812,20 @@ function DashboardApp({ authedUser, authRole, onLogout }) {
 
   const [paymentModeView, setPaymentModeView] = useState(null); // null | "Credit Card" | "Petty Cash"
 
+  const lastTopUpRef = useRef(null);
+  function deleteTopUp(id) {
+    setTopUps((prev) => prev.filter((t) => t.id !== id));
+    notify("Top-up deleted.");
+  }
+
   function addTopUp(mode, date, amount) {
     const amt = Number(amount);
     if (!date) return notify("Please select a date.", "error");
     if (isNaN(amt) || amt <= 0) return notify("Top-up amount must be a positive number.", "error");
+    // Guard against the same top-up being saved twice (double click / double submit).
+    const now = Date.now();
+    if (lastTopUpRef.current && lastTopUpRef.current.key === `${mode}|${date}|${amt}` && now - lastTopUpRef.current.at < 5000) return;
+    lastTopUpRef.current = { key: `${mode}|${date}|${amt}`, at: now };
     const topUp = { id: uid("t"), mode, date, amount: amt, createdAt: new Date().toISOString() };
     setTopUps((prev) => [topUp, ...prev]);
     notify(`${mode} topped up by ${fmtPKR(amt)}.`);
@@ -1098,6 +1115,8 @@ function DashboardApp({ authedUser, authRole, onLogout }) {
           headerNameById={headerNameById}
           onClose={() => setPaymentModeView(null)}
           onTopUp={addTopUp}
+          topUps={topUps.filter((t) => t.mode === paymentModeView)}
+          onDeleteTopUp={deleteTopUp}
         />
       )}
       <Toast toast={toast} />
@@ -1530,7 +1549,7 @@ function ExpenseTable({ rows, headerNameById, onEdit, onDelete }) {
 }
 
 /* ---------------------------------- PAYMENT MODE MODAL ---------------------------------- */
-function PaymentModeModal({ mode, stats, expenses, headerNameById, onClose, onTopUp }) {
+function PaymentModeModal({ mode, stats, expenses, headerNameById, onClose, onTopUp, topUps = [], onDeleteTopUp }) {
   const [showTopUp, setShowTopUp] = useState(false);
   const [topUpDate, setTopUpDate] = useState(todayISO());
   const [topUpAmount, setTopUpAmount] = useState("");
@@ -1538,10 +1557,15 @@ function PaymentModeModal({ mode, stats, expenses, headerNameById, onClose, onTo
   if (!stats) return null;
   const sorted = [...expenses].sort((a, b) => new Date(b.date) - new Date(a.date));
 
+  const [submitting, setSubmitting] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const handleTopUp = () => {
+    if (submitting) return;
+    setSubmitting(true);
     onTopUp(mode, topUpDate, topUpAmount);
     setShowTopUp(false);
     setTopUpAmount("");
+    setTimeout(() => setSubmitting(false), 800);
   };
 
   return (
@@ -1552,13 +1576,13 @@ function PaymentModeModal({ mode, stats, expenses, headerNameById, onClose, onTo
           {stats.isBalance ? (
             <>
               <div className="flex justify-between"><span style={{ color: C.muted }}>Opening Balance (1 Jul 2026)</span><span className="font-semibold" style={{ color: C.text }}>{fmtPKR(stats.opening)}</span></div>
-              <div className="flex justify-between"><span style={{ color: C.muted }}>Cash Received (1 Jul – 14 Sep)</span><span className="font-semibold" style={{ color: C.green }}>+{fmtPKR(stats.received)}</span></div>
+              <div className="flex justify-between"><span style={{ color: C.muted }}>Cash Received (petty cash sheet, 1 Jul – 14 Sep)</span><span className="font-semibold" style={{ color: C.green }}>+{fmtPKR(stats.received)}</span></div>
             </>
           ) : (
             <div className="flex justify-between"><span style={{ color: C.muted }}>Limit</span><span className="font-semibold" style={{ color: C.text }}>{fmtPKR(stats.limit)}</span></div>
           )}
           {stats.toppedUp > 0 && (
-            <div className="flex justify-between"><span style={{ color: C.muted }}>Topped Up</span><span className="font-semibold" style={{ color: C.green }}>+{fmtPKR(stats.toppedUp)}</span></div>
+            <div className="flex justify-between"><span style={{ color: C.muted }}>{stats.isBalance ? "Topped Up (added in app)" : "Topped Up"}</span><span className="font-semibold" style={{ color: C.green }}>+{fmtPKR(stats.toppedUp)}</span></div>
           )}
           {stats.isBalance ? (
             <>
@@ -1601,8 +1625,28 @@ function PaymentModeModal({ mode, stats, expenses, headerNameById, onClose, onTo
           </div>
           <div className="flex justify-end gap-2">
             <button onClick={() => setShowTopUp(false)} className="rounded-lg px-3.5 py-2 text-xs font-semibold" style={{ background: "#EEEEEE", color: C.muted }}>Cancel</button>
-            <button onClick={handleTopUp} className="rounded-lg px-3.5 py-2 text-xs font-semibold" style={{ background: C.accent, color: C.text }}>Confirm Top Up</button>
+            <button onClick={handleTopUp} disabled={submitting} className="rounded-lg px-3.5 py-2 text-xs font-semibold" style={{ background: C.accent, color: C.text, opacity: submitting ? 0.6 : 1 }}>Confirm Top Up</button>
           </div>
+        </div>
+      )}
+
+      {topUps.length > 0 && (
+        <div className="rounded-2xl mb-4 overflow-hidden" style={{ border: `1px solid ${C.border}` }}>
+          <div className="px-4 py-2.5 text-xs font-semibold uppercase tracking-wide" style={{ background: C.bg, color: C.muted }}>Top-ups added in app</div>
+          {[...topUps].sort((a, b) => String(b.date).localeCompare(String(a.date))).map((t) => (
+            <div key={t.id} className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm" style={{ borderTop: `1px solid ${C.border}` }}>
+              <span style={{ color: C.muted }}>{fmtDate(t.date)}</span>
+              <span className="font-semibold ml-auto" style={{ color: C.green }}>+{fmtPKR(t.amount)}</span>
+              {onDeleteTopUp && (confirmDeleteId === t.id ? (
+                <span className="flex items-center gap-2 text-xs">
+                  <button onClick={() => { onDeleteTopUp(t.id); setConfirmDeleteId(null); }} className="rounded-lg px-2.5 py-1 font-semibold" style={{ background: C.redLight, color: C.red }}>Delete</button>
+                  <button onClick={() => setConfirmDeleteId(null)} className="rounded-lg px-2.5 py-1 font-semibold" style={{ background: "#EEEEEE", color: C.muted }}>Cancel</button>
+                </span>
+              ) : (
+                <button onClick={() => setConfirmDeleteId(t.id)} className="p-1.5 rounded-lg hover:bg-gray-100" title="Delete top-up"><Trash2 size={14} color={C.red} /></button>
+              ))}
+            </div>
+          ))}
         </div>
       )}
 
