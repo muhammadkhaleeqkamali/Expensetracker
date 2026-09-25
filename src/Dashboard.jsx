@@ -591,7 +591,9 @@ function DashboardApp({ authedUser, authRole, onLogout }) {
   const toastTimer = useRef(null);
 
   const [expenseModal, setExpenseModal] = useState(null); // null | {} | expense obj
-  HIDE_AMOUNTS = !forceShowAmounts && (MASKED_BY_DEFAULT_VIEWS.includes(view) || expenseModal !== null);
+  // The Add/Edit Expense form always shows real budget figures (header budget, used, available)
+  // so you can see what's left before saving.
+  HIDE_AMOUNTS = !forceShowAmounts && expenseModal === null && MASKED_BY_DEFAULT_VIEWS.includes(view);
   const [headerModal, setHeaderModal] = useState(null);
   const [deleteExpenseId, setDeleteExpenseId] = useState(null);
   const [deleteHeaderId, setDeleteHeaderId] = useState(null);
@@ -1033,7 +1035,7 @@ function DashboardApp({ authedUser, authRole, onLogout }) {
             />
           )}
           <div className="text-center text-xs py-6 mt-2" style={{ color: C.muted }}>
-            Created by Shahbaz & Khaleeq
+            Created by Shahbaz &amp; Khaleeq · Version 25 Sep 2026
           </div>
         </main>
       </div>
