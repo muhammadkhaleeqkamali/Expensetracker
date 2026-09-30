@@ -579,7 +579,7 @@ function LoginScreen({ onLogin }) {
 }
 
 function DashboardApp({ authedUser, authRole, onLogout }) {
-  const [forceShowAmounts, setForceShowAmounts] = useState(false); // manual override
+  const [hideAmounts, setHideAmounts] = useState(false); // privacy toggle; amounts show by default
 
   const [headers, setHeaders] = useState(SEED_HEADERS);
   const [expenses, setExpenses] = useState(SEED_EXPENSES);
@@ -593,9 +593,8 @@ function DashboardApp({ authedUser, authRole, onLogout }) {
   const [loaded, setLoaded] = useState(false);
   const [view, setView] = useState("dashboard");
 
-  // Budget Headers and Expense Entries show amounts as 0 by default; the "Show Amounts"
-  // toggle lets you peek at real figures when needed. Other sections (Dashboard, BU
-  // Budgets, History) always show real numbers.
+  // Real amounts show everywhere by default. The sidebar "Hide Amounts" toggle masks them
+  // (as PKR 0) on Budget Headers and Expense Entries, e.g. when sharing the screen.
   const MASKED_BY_DEFAULT_VIEWS = ["headers", "expenses"];
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [toast, setToast] = useState(null);
@@ -604,7 +603,7 @@ function DashboardApp({ authedUser, authRole, onLogout }) {
   const [expenseModal, setExpenseModal] = useState(null); // null | {} | expense obj
   // The Add/Edit Expense form always shows real budget figures (header budget, used, available)
   // so you can see what's left before saving.
-  HIDE_AMOUNTS = !forceShowAmounts && expenseModal === null && MASKED_BY_DEFAULT_VIEWS.includes(view);
+  HIDE_AMOUNTS = hideAmounts && expenseModal === null && MASKED_BY_DEFAULT_VIEWS.includes(view);
   const [headerModal, setHeaderModal] = useState(null);
   const [deleteExpenseId, setDeleteExpenseId] = useState(null);
   const [deleteHeaderId, setDeleteHeaderId] = useState(null);
@@ -966,14 +965,14 @@ function DashboardApp({ authedUser, authRole, onLogout }) {
         </div>
         <div className="px-6 py-3" style={{ borderTop: `1px solid ${C.sidebarActive}` }}>
           <button
-            onClick={() => setForceShowAmounts((v) => !v)}
+            onClick={() => setHideAmounts((v) => !v)}
             className="w-full flex items-center justify-center gap-1.5 text-[11px] font-semibold px-2.5 py-1.5 rounded-lg"
-            style={{ color: forceShowAmounts ? "#1A1A1A" : C.sidebarText, background: forceShowAmounts ? C.accent : "transparent", border: `1px solid ${C.sidebarActive}` }}
+            style={{ color: hideAmounts ? "#1A1A1A" : C.sidebarText, background: hideAmounts ? C.accent : "transparent", border: `1px solid ${C.sidebarActive}` }}
           >
-            <Eye size={12} /> {forceShowAmounts ? "Hide Amounts Again" : "Show Amounts"}
+            <Eye size={12} /> {hideAmounts ? "Show Amounts" : "Hide Amounts"}
           </button>
           <p className="text-[10px] mt-1.5 text-center" style={{ color: C.sidebarMuted }}>
-            Budget Headers & Expense Entries show 0 by default
+            {hideAmounts ? "Amounts hidden on Budget Headers & Expense Entries" : "Hides amounts on Budget Headers & Expense Entries"}
           </p>
         </div>
         <div className="px-6 py-4 flex items-center justify-between" style={{ borderTop: `1px solid ${C.sidebarActive}` }}>
