@@ -5,10 +5,11 @@ import {
   CheckCircle2, Search, TrendingUp, TrendingDown, Eye, Menu,
   ChevronRight, RotateCcw, Info, FileText, Building2
 } from "lucide-react";
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Legend, ResponsiveContainer, Tooltip as RTooltip } from "recharts";
+import { AreaChart, Area, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Legend, ResponsiveContainer, Tooltip as RTooltip } from "recharts";
 import { createWorker } from "tesseract.js";
 import { STATIC_HISTORY } from "./historyData.js";
 import { HISTORICAL_EXPENSES } from "./historicalExpenses.js";
+import { RESTORED_APP_ENTRIES } from "./appEntries.js";
 
 /* ---------------------------------- THEME ---------------------------------- */
 const C = {
@@ -44,6 +45,13 @@ const fmtDate = (iso) => {
 // Portal-wide "hide amounts" toggle — flips to show 0 everywhere instead of real figures.
 // Set synchronously from DashboardApp's render body so it's current before children render.
 let HIDE_AMOUNTS = false;
+// Compact axis/label format: 1.2M, 450k
+const fmtShort = (v) => {
+  const n = Number(v || 0);
+  if (Math.abs(n) >= 1e6) return `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M`;
+  if (Math.abs(n) >= 1e3) return `${Math.round(n / 1e3)}k`;
+  return String(n);
+};
 const fmtPKR = (n) => HIDE_AMOUNTS ? "PKR 0" : `PKR ${Number(n || 0).toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 const pct = (used, budget) => (budget > 0 ? (used / budget) * 100 : 0);
 const uid = (p) => `${p}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
@@ -179,14 +187,6 @@ const SEGMENT_BUDGETS = {
   "OTHERS": {
     "Other Expenses": { budget: 0, priorExhausted: 0 },
   },
-  "REPAIRS & MAINTENANCE": {
-    "Building": { budget: 0, priorExhausted: 0 },
-    "General Maintenance": { budget: 0, priorExhausted: 0 },
-    "R&M - AC and Appliances": { budget: 0, priorExhausted: 0 },
-    "R&M - Electronics (LEDs, etc.)": { budget: 0, priorExhausted: 0 },
-    "R&M - Furnitures and Fixtures": { budget: 0, priorExhausted: 0 },
-    "R&M - Equipments Admin": { budget: 0, priorExhausted: 0 },
-  },
 };
 const sumSegmentBudgets = (headerName) => Object.values(SEGMENT_BUDGETS[headerName] || {}).reduce((s, seg) => s + seg.budget, 0);
 const sumSegmentPriorExhausted = (headerName) => Object.values(SEGMENT_BUDGETS[headerName] || {}).reduce((s, seg) => s + (seg.priorExhausted || 0), 0);
@@ -195,7 +195,6 @@ const SEED_HEADERS = [
   { id: "h1", name: "REFRESHMENTS (TEA, COFFEE, ETC.)", budget: sumSegmentBudgets("REFRESHMENTS (TEA, COFFEE, ETC.)"), startDate: "2026-07-20", endDate: "", status: "Active" },
   { id: "h2", name: "OFFICE SUPPLIES", budget: sumSegmentBudgets("OFFICE SUPPLIES"), startDate: "2026-07-20", endDate: "", status: "Active" },
   { id: "h3", name: "MISCELLANEOUS", budget: sumSegmentBudgets("MISCELLANEOUS"), startDate: "2026-07-20", endDate: "", status: "Active" },
-  { id: "h4", name: "REPAIRS & MAINTENANCE", budget: sumSegmentBudgets("REPAIRS & MAINTENANCE"), startDate: "2026-07-20", endDate: "", status: "Active" },
   { id: "h6", name: "OTHERS", budget: 0, startDate: "2026-07-20", endDate: "", status: "Active" },
 ];
 
@@ -205,7 +204,6 @@ const SEGMENTS_BY_HEADER = {
   "OFFICE SUPPLIES": ["Janitorial expenses", "Kitchen expenses", "Office supplies", "Drinking water"],
   "MISCELLANEOUS": ["Postage and Delivery", "Stationery", "Printing and Reproduction", "Fare allowance", "Entertainment", "Other Expenses", "Daily meals"],
   "OTHERS": ["Other Expenses"],
-  "REPAIRS & MAINTENANCE": ["Building", "General Maintenance", "R&M - AC and Appliances", "R&M - Electronics (LEDs, etc.)", "R&M - Furnitures and Fixtures", "R&M - Equipments Admin"],
 };
 const DEFAULT_SEGMENTS = ["General"];
 const segmentsForHeader = (headerName) => SEGMENTS_BY_HEADER[headerName] || DEFAULT_SEGMENTS;
@@ -214,7 +212,7 @@ const segmentsForHeader = (headerName) => SEGMENTS_BY_HEADER[headerName] || DEFA
 // Budget / Used (prior-exhausted + app-tracked) / Remaining — matching the sheet's columns.
 // Budget Headers with no allocated budget — we only track the amount spent (and report it to
 // Finance), so no remaining / utilization / over-budget warnings are shown for them.
-const NO_BUDGET_HEADER_IDS = new Set(["h4", "h6"]); // h4 = REPAIRS & MAINTENANCE, h6 = OTHERS (no budget set yet)
+const NO_BUDGET_HEADER_IDS = new Set(["h6"]); // h6 = OTHERS (no budget set yet)
 const isNoBudgetHeader = (id) => NO_BUDGET_HEADER_IDS.has(id);
 
 function getSegmentBreakdown(headerName, headerId, expenses) {
@@ -347,14 +345,16 @@ const HARD_FM_DEFAULT_BUDGET = 3168214.4675;
 const SOFT_FM_DEFAULT_BUDGET = 6517151.005 + 2775518.34625 + 1265612.8265;
 
 // Real expense entries start empty — data is added via the app or synced from the Google Sheet.
-const SEED_EXPENSES = HISTORICAL_EXPENSES;
+// Built-in entries every browser starts with: the imported petty-cash/finance entries plus the
+// app entries restored from the Google Sheet log.
+const SEED_EXPENSES = [...HISTORICAL_EXPENSES, ...RESTORED_APP_ENTRIES];
 
 const STORAGE_KEY = "wsbd-app-data-v2";
 // Bump this whenever historicalExpenses.js is re-imported. On load, saved "hist_" entries are
 // swapped for the fresh import while anything added through the app is kept.
-const HIST_VERSION = "2026-09-25-topup-cleanup";
+const HIST_VERSION = "2026-10-26-restore-from-sheet";
 // Budget Headers that were removed from the dashboard; dropped from saved browser data on load.
-const REMOVED_HEADER_IDS = new Set(["h5"]); // h5 = UTILITIES
+const REMOVED_HEADER_IDS = new Set(["h5", "h4"]); // h5 = UTILITIES, h4 = REPAIRS & MAINTENANCE
 
 // Paste the Apps Script Web App URL here after deploying (ends in /exec).
 // Leave empty and the app just keeps working off local storage, same as before.
@@ -629,11 +629,17 @@ function DashboardApp({ authedUser, authRole, onLogout }) {
           setHeaders([...kept, ...missing]);
         }
         if (parsed.expenses) {
+          // Entries under removed headers (Utilities, Repairs & Maintenance) are dropped too.
+          const notRemoved = (e) => !REMOVED_HEADER_IDS.has(e.headerId);
           if (parsed.histVersion === HIST_VERSION) {
-            setExpenses(parsed.expenses);
+            setExpenses(parsed.expenses.filter(notRemoved));
           } else {
-            const appAdded = parsed.expenses.filter((e) => !String(e.id).startsWith("hist_"));
-            setExpenses([...HISTORICAL_EXPENSES, ...appAdded]);
+            // Refresh the built-in entries. Anything this browser has that isn't built in is kept,
+            // and for restored app entries this browser's own copy wins (it may have newer edits).
+            const local = parsed.expenses.filter((e) => !String(e.id).startsWith("hist_") && notRemoved(e));
+            const localIds = new Set(local.map((e) => e.id));
+            const restored = RESTORED_APP_ENTRIES.filter((e) => !localIds.has(e.id));
+            setExpenses([...HISTORICAL_EXPENSES, ...restored, ...local]);
           }
         }
         if (parsed.topUps) {
@@ -656,10 +662,20 @@ function DashboardApp({ authedUser, authRole, onLogout }) {
   // Persist on change
   useEffect(() => {
     if (!loaded) return;
+    const payload = { headers, expenses, topUps, buBudgets, histVersion: HIST_VERSION };
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ headers, expenses, topUps, buBudgets, histVersion: HIST_VERSION }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     } catch (e) {
-      console.error("Storage error", e);
+      // Browser storage is full (usually from attached photos). Save everything except the
+      // attachment files themselves so entries are never silently lost.
+      try {
+        const slim = { ...payload, expenses: expenses.map((x) => ({ ...x, imageData: null, documentData: null })) };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(slim));
+        setToast({ msg: "Browser storage is full — entries saved, but attached photos are kept only in Google Drive.", type: "error" });
+      } catch (e2) {
+        console.error("Storage error", e2);
+        setToast({ msg: "Couldn't save to this browser — storage is full. Please contact the admin before adding more entries.", type: "error" });
+      }
     }
   }, [headers, expenses, topUps, buBudgets, loaded]);
 
@@ -758,7 +774,7 @@ function DashboardApp({ authedUser, authRole, onLogout }) {
     const activeStats = headerStats.filter((h) => h.status === "Active");
     const totalBudget = activeStats.reduce((s, h) => s + Number(h.budget), 0);
     const totalUsed = activeStats.reduce((s, h) => s + h.used, 0);
-    // Headers with no budget (e.g. Repairs & Maintenance) count toward Total Used but not
+    // Headers with no budget (e.g. Others) count toward Total Used but not
     // toward Remaining / Utilization, which only make sense against an allocated budget.
     const budgetedUsed = activeStats.filter((h) => !h.noBudget).reduce((s, h) => s + h.used, 0);
     return { totalBudget, totalUsed, budgetedUsed, remaining: totalBudget - budgetedUsed, utilization: pct(budgetedUsed, totalBudget) };
@@ -1070,7 +1086,7 @@ function DashboardApp({ authedUser, authRole, onLogout }) {
             />
           )}
           <div className="text-center text-xs py-6 mt-2" style={{ color: C.muted }}>
-            Created by Shahbaz &amp; Khaleeq · Version 25 Sep 2026
+            Created by Shahbaz &amp; Khaleeq · Version 26 Oct 2026
           </div>
         </main>
       </div>
@@ -1140,7 +1156,7 @@ function KPICard({ label, value, sub, icon: Icon, tone }) {
           <Icon size={16} color={t.fg} />
         </div>
       </div>
-      <div className="text-2xl font-bold tabular-nums tracking-tight" style={{ color: C.text }}>{value}</div>
+      <div className="text-xl xl:text-2xl font-bold tabular-nums tracking-tight whitespace-nowrap" style={{ color: C.text }}>{value}</div>
       {sub && <div className="text-xs mt-1.5" style={{ color: C.muted }}>{sub}</div>}
     </div>
   );
@@ -1150,6 +1166,29 @@ function KPICard({ label, value, sub, icon: Icon, tone }) {
 function DashboardView({ totals, headerStats, overBudgetHeaders, expenses, headerNameById, paymentModeStats, buStats, onViewPaymentMode, onAddExpense, onEditExpense, onDeleteExpense, onViewAll, onViewBuBudgets }) {
   const recent = [...expenses].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 6);
   const [expandedHeaderId, setExpandedHeaderId] = useState(null);
+
+  // Spend per month (all modes), oldest → newest.
+  const monthlySpend = useMemo(() => {
+    const m = {};
+    expenses.forEach((e) => {
+      const k = String(e.date || "").slice(0, 7);
+      if (/^\d{4}-\d{2}$/.test(k)) m[k] = (m[k] || 0) + Number(e.amount || 0);
+    });
+    return Object.keys(m).sort().map((k) => ({ key: k, label: `${MONTHS[Number(k.slice(5, 7)) - 1]} ${k.slice(2, 4)}`, amount: m[k] }));
+  }, [expenses]);
+  const latestMonthKey = monthlySpend.length ? monthlySpend[monthlySpend.length - 1].key : null;
+
+  // Top segments by amount spent.
+  const topSegments = useMemo(() => {
+    const m = {};
+    expenses.forEach((e) => {
+      const k = `${headerNameById[e.headerId] || "—"}|${e.segment || "—"}`;
+      m[k] = (m[k] || 0) + Number(e.amount || 0);
+    });
+    const rows = Object.entries(m).map(([k, amount]) => { const [header, segment] = k.split("|"); return { header, segment, amount }; });
+    return rows.sort((a, b) => b.amount - a.amount).slice(0, 6);
+  }, [expenses, headerNameById]);
+  const topSegmentMax = topSegments.length ? topSegments[0].amount : 0;
 
   return (
     <div className="space-y-6">
@@ -1190,9 +1229,9 @@ function DashboardView({ totals, headerStats, overBudgetHeaders, expenses, heade
                     {p.over && <Badge tone="red">{p.isBalance ? "Cash Short" : "Over Limit"}</Badge>}
                   </div>
                   <div className="space-y-1 text-xs">
-                    <div className="flex justify-between"><span style={{ color: C.muted }}>{p.isBalance ? "Total Cash (since 1 Jul)" : "Limit"}</span><span className="font-semibold" style={{ color: C.text }}>{fmtPKR(p.limit)}</span></div>
-                    <div className="flex justify-between"><span style={{ color: C.muted }}>Spent</span><span className="font-semibold" style={{ color: C.text }}>{fmtPKR(p.used)}</span></div>
-                    <div className="flex justify-between"><span style={{ color: C.muted }}>{p.isBalance ? "Available Balance" : "Remaining"}</span><span className="font-semibold" style={{ color: p.remaining < 0 ? C.red : C.green }}>{fmtPKR(p.remaining)}</span></div>
+                    <div className="flex justify-between"><span style={{ color: C.muted }}>{p.isBalance ? "Total Cash Received" : "Total Limit"}</span><span className="font-semibold" style={{ color: C.text }}>{fmtPKR(p.limit)}</span></div>
+                    <div className="flex justify-between"><span style={{ color: C.muted }}>Used</span><span className="font-semibold" style={{ color: C.text }}>{fmtPKR(p.used)}</span></div>
+                    <div className="flex justify-between"><span style={{ color: C.muted }}>Remaining</span><span className="font-semibold" style={{ color: p.remaining < 0 ? C.red : C.green }}>{fmtPKR(p.remaining)}</span></div>
                   </div>
                   <div className="mt-2 text-xs font-semibold flex items-center gap-1" style={{ color: C.green }}>
                     View details <ChevronRight size={13} />
@@ -1286,6 +1325,59 @@ function DashboardView({ totals, headerStats, overBudgetHeaders, expenses, heade
               <span style={{ color: C.text }}>{fmtPKR(totals.budgetedUsed)}</span>
               <span style={{ color: C.text }}>{fmtPKR(Math.max(totals.remaining, 0))}</span>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        {/* Monthly spend */}
+        <div className="rounded-2xl p-5 shadow-sm" style={{ background: C.card, border: `1px solid ${C.border}` }}>
+          <div className="flex items-baseline justify-between mb-1">
+            <h3 className="text-sm font-semibold" style={{ color: C.text }}>Monthly Spend</h3>
+            <span className="text-xs" style={{ color: C.muted }}>All payment modes</span>
+          </div>
+          <p className="text-xs mb-4" style={{ color: C.muted }}>How much was spent each month</p>
+          <div style={{ width: "100%", height: 220 }}>
+            <ResponsiveContainer>
+              <BarChart data={monthlySpend} margin={{ top: 18, right: 8, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false} />
+                <XAxis dataKey="label" tick={{ fontSize: 11, fill: C.muted }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 11, fill: C.muted }} axisLine={false} tickLine={false} tickFormatter={fmtShort} width={48} />
+                <RTooltip cursor={{ fill: C.bg }} formatter={(v) => [fmtPKR(v), "Spent"]} contentStyle={{ borderRadius: 10, border: `1px solid ${C.border}`, fontSize: 12 }} />
+                <Bar dataKey="amount" radius={[8, 8, 0, 0]} maxBarSize={56}
+                  label={{ position: "top", fontSize: 11, fill: C.text, formatter: (v) => (HIDE_AMOUNTS ? "" : fmtShort(v)) }}>
+                  {monthlySpend.map((m) => <Cell key={m.key} fill={m.key === latestMonthKey ? C.text : "#C9CFDA"} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Top segments */}
+        <div className="rounded-2xl p-5 shadow-sm" style={{ background: C.card, border: `1px solid ${C.border}` }}>
+          <div className="flex items-baseline justify-between mb-1">
+            <h3 className="text-sm font-semibold" style={{ color: C.text }}>Top Spending Segments</h3>
+            <button onClick={onViewAll} className="text-xs font-semibold" style={{ color: C.green }}>View entries →</button>
+          </div>
+          <p className="text-xs mb-4" style={{ color: C.muted }}>Where the money went, by segment</p>
+          <div className="space-y-3">
+            {topSegments.map((r, idx) => (
+              <div key={`${r.header}-${r.segment}`}>
+                <div className="flex items-center justify-between gap-3 text-sm mb-1.5">
+                  <div className="min-w-0 flex items-center gap-2">
+                    <span className="shrink-0 w-5 h-5 rounded-full text-[10px] font-bold flex items-center justify-center" style={{ background: idx === 0 ? C.text : C.bg, color: idx === 0 ? C.card : C.muted }}>{idx + 1}</span>
+                    <div className="min-w-0">
+                      <div className="font-semibold truncate leading-tight" style={{ color: C.text }}>{r.segment}</div>
+                      <div className="text-[11px] truncate leading-tight" style={{ color: C.muted }}>{r.header}</div>
+                    </div>
+                  </div>
+                  <span className="font-semibold tabular-nums shrink-0" style={{ color: C.text }}>{fmtPKR(r.amount)}</span>
+                </div>
+                <div className="h-1.5 rounded-full overflow-hidden" style={{ background: C.bg }}>
+                  <div className="h-full rounded-full" style={{ width: `${topSegmentMax ? Math.max(3, (r.amount / topSegmentMax) * 100) : 0}%`, background: idx === 0 ? C.text : "#9AA3B5" }} />
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       </div>
@@ -1426,7 +1518,7 @@ function HeaderTrendChart({ headerStats, expenses }) {
   return (
     <div style={{ height: 240 }}>
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={data} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+        <AreaChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
           <defs>
             {activeHeaders.map((h, i) => {
               const color = CHART_COLORS[i % CHART_COLORS.length];
@@ -1440,7 +1532,7 @@ function HeaderTrendChart({ headerStats, expenses }) {
           </defs>
           <CartesianGrid strokeDasharray="3 3" stroke="#E5E5E5" vertical={false} />
           <XAxis dataKey="date" tick={{ fontSize: 11, fill: C.muted }} axisLine={{ stroke: C.border }} tickLine={false} />
-          <YAxis tick={{ fontSize: 11, fill: C.muted }} axisLine={false} tickLine={false} tickFormatter={(v) => (v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v)} width={40} />
+          <YAxis tick={{ fontSize: 11, fill: C.muted }} axisLine={false} tickLine={false} tickFormatter={fmtShort} width={48} />
           <RTooltip content={<TrendTooltip />} />
           <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
           {activeHeaders.map((h, i) => {
@@ -1573,26 +1665,20 @@ function PaymentModeModal({ mode, stats, expenses, headerNameById, onClose, onTo
         <Gauge percent={stats.utilization} size={120} stroke={11} over={stats.over} />
         <div className="flex-1 min-w-[180px] space-y-2 text-sm">
           {stats.isBalance ? (
+            // Petty Cash: keep it simple — total cash received, used, remaining.
             <>
-              <div className="flex justify-between"><span style={{ color: C.muted }}>Opening Balance (1 Jul 2026)</span><span className="font-semibold" style={{ color: C.text }}>{fmtPKR(stats.opening)}</span></div>
-              <div className="flex justify-between"><span style={{ color: C.muted }}>Cash Received (petty cash sheet, 1 Jul – 14 Sep)</span><span className="font-semibold" style={{ color: C.green }}>+{fmtPKR(stats.received)}</span></div>
+              <div className="flex justify-between"><span style={{ color: C.muted }}>Total Cash Received</span><span className="font-semibold" style={{ color: C.text }}>{fmtPKR(stats.limit)}</span></div>
+              <div className="flex justify-between"><span style={{ color: C.muted }}>Used</span><span className="font-semibold" style={{ color: C.text }}>{fmtPKR(stats.used)}</span></div>
+              <div className="flex justify-between"><span style={{ color: C.muted }}>Remaining</span><span className="font-semibold" style={{ color: stats.remaining < 0 ? C.red : C.green }}>{fmtPKR(stats.remaining)}</span></div>
             </>
           ) : (
-            <div className="flex justify-between"><span style={{ color: C.muted }}>Limit</span><span className="font-semibold" style={{ color: C.text }}>{fmtPKR(stats.limit)}</span></div>
-          )}
-          {stats.toppedUp > 0 && (
-            <div className="flex justify-between"><span style={{ color: C.muted }}>{stats.isBalance ? "Topped Up (added in app)" : "Topped Up"}</span><span className="font-semibold" style={{ color: C.green }}>+{fmtPKR(stats.toppedUp)}</span></div>
-          )}
-          {stats.isBalance ? (
+            // Credit Card: same simple view — total limit (incl. top-ups), used, remaining.
             <>
-              <div className="flex justify-between"><span style={{ color: C.muted }}>Spent (petty cash sheet, 1 Jul – 14 Sep)</span><span className="font-semibold" style={{ color: C.text }}>{fmtPKR(stats.ledgerSpent)}</span></div>
-              <div className="flex justify-between"><span style={{ color: C.muted }}>Spent (added in app)</span><span className="font-semibold" style={{ color: C.text }}>{fmtPKR(stats.newUsed)}</span></div>
+              <div className="flex justify-between"><span style={{ color: C.muted }}>Total Limit</span><span className="font-semibold" style={{ color: C.text }}>{fmtPKR(stats.limit)}</span></div>
+              <div className="flex justify-between"><span style={{ color: C.muted }}>Used</span><span className="font-semibold" style={{ color: C.text }}>{fmtPKR(stats.used)}</span></div>
+              <div className="flex justify-between"><span style={{ color: C.muted }}>Remaining</span><span className="font-semibold" style={{ color: stats.remaining < 0 ? C.red : C.green }}>{fmtPKR(stats.remaining)}</span></div>
             </>
-          ) : (
-            <div className="flex justify-between"><span style={{ color: C.muted }}>Spent</span><span className="font-semibold" style={{ color: C.text }}>{fmtPKR(stats.used)}</span></div>
           )}
-          <div className="flex justify-between"><span style={{ color: C.muted }}>{stats.isBalance ? "Available Balance" : "Remaining"}</span><span className="font-semibold" style={{ color: stats.remaining < 0 ? C.red : C.green }}>{fmtPKR(stats.remaining)}</span></div>
-          <div className="flex justify-between"><span style={{ color: C.muted }}>Entries</span><span className="font-semibold" style={{ color: C.text }}>{expenses.length}</span></div>
         </div>
       </div>
       {stats.over && (
@@ -1649,9 +1735,7 @@ function PaymentModeModal({ mode, stats, expenses, headerNameById, onClose, onTo
         </div>
       )}
 
-      <div className="rounded-2xl overflow-hidden" style={{ border: `1px solid ${C.border}` }}>
-        <ExpenseTable rows={sorted} headerNameById={headerNameById} />
-      </div>
+      {/* Individual entries are no longer listed in this popup — they stay on the Expense Entries page. */}
     </Modal>
   );
 }
@@ -1811,39 +1895,136 @@ function BuBudgetsView({ buStats, onSetBudget }) {
 
 /* ---------------------------------- EXPENSES VIEW ---------------------------------- */
 function ExpensesView({ expenses, headers, headerNameById, onAdd, onEdit, onDelete }) {
-  const [search, setSearch] = useState("");
   const [headerFilter, setHeaderFilter] = useState("all");
+  const [segmentFilter, setSegmentFilter] = useState("all");
+  const [monthFilter, setMonthFilter] = useState("all"); // "YYYY-MM"
+  const [modeFilter, setModeFilter] = useState("all");
+  const [search, setSearch] = useState("");
+
+  // Segments for the selected header: the header's standard segments plus any other
+  // segment names actually used in its entries.
+  const segmentOptions = useMemo(() => {
+    if (headerFilter === "all") return [];
+    const name = headerNameById[headerFilter];
+    const used = expenses.filter((e) => e.headerId === headerFilter).map((e) => e.segment).filter(Boolean);
+    return [...new Set([...(name ? segmentsForHeader(name) : []), ...used])];
+  }, [headerFilter, expenses, headerNameById]);
+
+  // Months that have entries, newest first.
+  const monthOptions = useMemo(() => {
+    const keys = [...new Set(expenses.map((e) => String(e.date || "").slice(0, 7)).filter((k) => /^\d{4}-\d{2}$/.test(k)))];
+    return keys.sort((a, b) => b.localeCompare(a)).map((k) => ({ key: k, label: `${MONTHS[Number(k.slice(5, 7)) - 1]} ${k.slice(0, 4)}` }));
+  }, [expenses]);
+
+  // Always list every payment mode (Credit Card, Petty Cash, Finance Payment), plus any other mode found in entries.
+  const modeOptions = useMemo(() => [...new Set([...PAYMENT_MODES, ...expenses.map((e) => e.mode).filter(Boolean)])], [expenses]);
 
   const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
     return expenses
       .filter((e) => (headerFilter === "all" ? true : e.headerId === headerFilter))
+      .filter((e) => (segmentFilter === "all" ? true : e.segment === segmentFilter))
+      .filter((e) => (monthFilter === "all" ? true : String(e.date || "").startsWith(monthFilter)))
+      .filter((e) => (modeFilter === "all" ? true : e.mode === modeFilter))
       .filter((e) => {
-        if (!search.trim()) return true;
-        const s = search.toLowerCase();
-        return e.description.toLowerCase().includes(s) || (e.vendor || "").toLowerCase().includes(s) || e.addedBy.toLowerCase().includes(s);
+        if (!q) return true;
+        return `${e.description} ${e.vendor || ""} ${e.addedBy || ""} ${e.remarks || ""}`.toLowerCase().includes(q);
       })
       .sort((a, b) => new Date(b.date) - new Date(a.date));
-  }, [expenses, search, headerFilter]);
+  }, [expenses, search, headerFilter, segmentFilter, monthFilter, modeFilter]);
+
+  const filteredTotal = filtered.reduce((sum, e) => sum + Number(e.amount || 0), 0);
+  // Entries matching every filter except Segment — used for the per-segment counts on the chips.
+  const segmentBase = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return expenses.filter((e) => headerFilter !== "all" && e.headerId === headerFilter
+      && (monthFilter === "all" || String(e.date || "").startsWith(monthFilter))
+      && (modeFilter === "all" || e.mode === modeFilter)
+      && (!q || `${e.description} ${e.vendor || ""} ${e.addedBy || ""} ${e.remarks || ""}`.toLowerCase().includes(q)));
+  }, [expenses, headerFilter, monthFilter, modeFilter, search]);
+  const filterSelectStyle = { ...inputStyle, width: "auto", height: 38, paddingTop: 0, paddingBottom: 0, fontSize: 13, flexShrink: 0 };
+  const anyFilter = headerFilter !== "all" || segmentFilter !== "all" || monthFilter !== "all" || modeFilter !== "all" || search.trim() !== "";
+  const clearFilters = () => { setHeaderFilter("all"); setSegmentFilter("all"); setMonthFilter("all"); setModeFilter("all"); setSearch(""); };
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 justify-between">
-        <div className="flex items-center gap-2 flex-1">
-          <div className="relative flex-1 max-w-xs">
-            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2" color={C.muted} />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search description, vendor, added by…"
-              style={{ ...inputStyle, paddingLeft: 32 }} />
+      {/* One compact row: Header · Month · Mode · Search · Clear */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-1">
+        <select value={headerFilter} onChange={(e) => { setHeaderFilter(e.target.value); setSegmentFilter("all"); }} style={{ ...filterSelectStyle, maxWidth: 230 }}>
+          <option value="all">All Headers</option>
+          {headers.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
+        </select>
+        <select value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} style={{ ...filterSelectStyle, maxWidth: 140 }}>
+          <option value="all">All Months</option>
+          {monthOptions.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
+        </select>
+        <select value={modeFilter} onChange={(e) => setModeFilter(e.target.value)} style={{ ...filterSelectStyle, maxWidth: 160 }}>
+          <option value="all">All Modes</option>
+          {modeOptions.map((m) => <option key={m} value={m}>{m}</option>)}
+        </select>
+        <div className="relative flex-1 min-w-[180px]">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" color={C.muted} />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search…"
+            style={{ ...filterSelectStyle, width: "100%", paddingLeft: 30 }} />
+        </div>
+        {anyFilter && (
+          <button onClick={clearFilters} title="Clear filters" className="shrink-0 flex items-center gap-1 text-xs font-semibold px-3 rounded-lg"
+            style={{ height: 38, color: C.muted, border: `1px solid ${C.border}`, background: C.card }}>
+            <X size={13} /> Clear
+          </button>
+        )}
+      </div>
+
+      {/* Segment chips — appear once a Budget Header is picked; tap one to see only its entries */}
+      {headerFilter !== "all" && (
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 -mt-2">
+          <span className="shrink-0 text-xs font-semibold uppercase tracking-wide mr-1" style={{ color: C.muted }}>Segment</span>
+          {[{ key: "all", label: "All" }, ...segmentOptions.map((sg) => ({ key: sg, label: sg }))].map((chip) => {
+            const active = segmentFilter === chip.key;
+            const count = chip.key === "all" ? segmentBase.length : segmentBase.filter((e) => e.segment === chip.key).length;
+            return (
+              <button key={chip.key} onClick={() => setSegmentFilter(chip.key)}
+                className="shrink-0 flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full whitespace-nowrap"
+                style={{ background: active ? C.text : C.card, color: active ? C.card : C.text, border: `1px solid ${active ? C.text : C.border}` }}>
+                {chip.label}
+                <span className="rounded-full px-1.5 text-[10px]" style={{ background: active ? "rgba(255,255,255,0.2)" : C.bg, color: active ? C.card : C.muted }}>{count}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {/* Summary of what's on screen: filter context on the left, total on the right */}
+      <div className="rounded-2xl px-5 py-4 flex flex-wrap items-center justify-between gap-4 shadow-sm"
+        style={{ background: C.card, border: `1px solid ${C.border}`, borderLeft: `4px solid ${C.text}` }}>
+        <div className="min-w-0">
+          <div className="text-[11px] font-semibold uppercase tracking-wide mb-1.5" style={{ color: C.muted }}>Showing</div>
+          <div className="flex flex-wrap items-center gap-1.5 text-sm">
+            <span className="font-semibold px-2.5 py-1 rounded-full" style={{ background: C.bg, color: C.text }}>
+              {headerFilter === "all" ? "All Headers" : headerNameById[headerFilter]}
+            </span>
+            {segmentFilter !== "all" && (
+              <>
+                <ChevronRight size={14} color={C.muted} />
+                <span className="font-semibold px-2.5 py-1 rounded-full" style={{ background: C.bg, color: C.text }}>{segmentFilter}</span>
+              </>
+            )}
+            {monthFilter !== "all" && (
+              <span className="font-semibold px-2.5 py-1 rounded-full" style={{ background: C.bg, color: C.text }}>{monthOptions.find((m) => m.key === monthFilter)?.label}</span>
+            )}
+            {modeFilter !== "all" && (
+              <span className="font-semibold px-2.5 py-1 rounded-full" style={{ background: C.bg, color: C.text }}>{modeFilter}</span>
+            )}
+            <span className="text-xs ml-1" style={{ color: C.muted }}>{filtered.length} of {expenses.length} entries</span>
           </div>
-          <select value={headerFilter} onChange={(e) => setHeaderFilter(e.target.value)} style={{ ...inputStyle, maxWidth: 200 }}>
-            <option value="all">All Headers</option>
-            {headers.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
-          </select>
+        </div>
+        <div className="text-right shrink-0">
+          <div className="text-[11px] font-semibold uppercase tracking-wide mb-0.5" style={{ color: C.muted }}>Total</div>
+          <div className="text-2xl font-bold tabular-nums" style={{ color: C.text }}>{fmtPKR(filteredTotal)}</div>
         </div>
       </div>
       <div className="rounded-2xl shadow-sm overflow-hidden" style={{ background: C.card, border: `1px solid ${C.border}` }}>
         <ExpenseTable rows={filtered} headerNameById={headerNameById} onEdit={onEdit} onDelete={onDelete} />
       </div>
-      <p className="text-xs" style={{ color: C.muted }}>{filtered.length} of {expenses.length} entries shown</p>
     </div>
   );
 }
@@ -2028,7 +2209,7 @@ function ReportsView({ headers, expenses, headerStats, headerNameById }) {
 
   const filteredTotal = filtered.reduce((s, e) => s + Number(e.amount), 0);
   const scopedBudget = headerFilter === "all" ? headers.filter((h) => !isNoBudgetHeader(h.id)).reduce((s, h) => s + Number(h.budget), 0) : (isNoBudgetHeader(headerFilter) ? 0 : headers.find(h => h.id === headerFilter)?.budget || 0);
-  // Remaining / utilization only compare budgeted spend against budget (Repairs & Maintenance has none).
+  // Remaining / utilization only compare budgeted spend against budget (e.g. Others has none).
   const budgetedFilteredTotal = filtered.filter((e) => !isNoBudgetHeader(e.headerId)).reduce((s, e) => s + Number(e.amount), 0);
 
   const byHeader = useMemo(() => {
@@ -2228,7 +2409,7 @@ function ExportView({ headers, expenses, headerNameById, notify }) {
       ["Total Used", totalUsed],
       ["Total Remaining", totalBudget - totalUsed],
       ["Utilization %", pct(totalUsed, totalBudget).toFixed(2)],
-      ["Spent on headers with no budget (Repairs & Maintenance)", noBudgetUsed],
+      ["Spent on headers with no budget (Others)", noBudgetUsed],
       ["Period", "20 Jul 2026 to " + fmtDate(todayISO())],
     ];
     downloadCSV(toCSV(rows), "budget-summary.csv");
@@ -2397,33 +2578,94 @@ function ExpenseModal({ headers, initial, onClose, onSave, headerStats, expenses
     setForm((f) => ({ ...f, headerId: newHeaderId, segment: newSegments[0] || "" }));
   };
 
-  const MAX_IMAGE_BYTES = 1.5 * 1024 * 1024; // ~1.5MB, keeps localStorage usable
+  const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // original photo size limit (it gets shrunk before saving)
+  const MAX_PDF_BYTES = 3 * 1024 * 1024;
   const [scanning, setScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
+  const [scanResult, setScanResult] = useState(null); // { by: "ai" | "basic", filled: [...], notes }
 
+  // Shrink phone photos (often 3–8 MB) to ≤1600px JPEG so they save and upload quickly.
+  const compressImage = (dataUrl) => new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const max = 1600;
+      const scale = Math.min(1, max / Math.max(img.width, img.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL("image/jpeg", 0.85));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+
+  // 1) AI scan through /api/scan-receipt (reads invoices accurately, also suggests Header & Segment).
+  // 2) If that isn't available, fall back to the basic on-device OCR (images only).
   const scanReceipt = async (dataUrl) => {
     setScanning(true);
     setScanProgress(0);
+    setScanResult(null);
+    const mediaType = (dataUrl.match(/^data:([^;]+);base64,/) || [])[1] || "image/jpeg";
+    const base64 = dataUrl.split(",")[1] || "";
     try {
-      const worker = await createWorker("eng", 1, {
-        logger: (m) => {
-          if (m.status === "recognizing text") setScanProgress(Math.round((m.progress || 0) * 100));
-        },
+      const r = await fetch("/api/scan-receipt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mediaType,
+          data: base64,
+          headers: headers.map((h) => ({ id: h.id, name: h.name, segments: segmentsForHeader(h.name) })),
+        }),
       });
-      const { data } = await worker.recognize(dataUrl);
-      await worker.terminate();
-
-      const parsed = parseReceiptText(data.text || "");
-      setForm((f) => ({
-        ...f,
-        vendor: parsed.vendor || f.vendor,
-        amount: parsed.amount !== "" ? parsed.amount : f.amount,
-        date: parsed.date || f.date,
-        description: parsed.description || f.description,
-      }));
-      notify?.("Receipt scanned — fields filled in, please double-check before saving.");
-    } catch (err) {
-      notify?.("Couldn't read the receipt automatically. Please fill the details manually.", "error");
+      if (!r.ok) throw new Error("ai-unavailable");
+      const ai = await r.json();
+      const filled = [];
+      setForm((f) => {
+        const next = { ...f };
+        if (ai.vendor) { next.vendor = ai.vendor; filled.push("Vendor"); }
+        if (ai.amount) { next.amount = String(ai.amount); filled.push("Amount"); }
+        if (ai.date) { next.date = ai.date; filled.push("Date"); }
+        if (ai.description) { next.description = ai.description; filled.push("Description"); }
+        if (ai.headerId) {
+          next.headerId = ai.headerId;
+          const segs = segmentsForHeader(headers.find((h) => h.id === ai.headerId)?.name || "");
+          next.segment = ai.segment && segs.includes(ai.segment) ? ai.segment : segs[0] || "";
+          filled.push("Budget Header", "Segment");
+        }
+        if (ai.invoiceNumber && !String(f.remarks || "").includes(ai.invoiceNumber)) {
+          next.remarks = [f.remarks, `Invoice #${ai.invoiceNumber}`].filter(Boolean).join(" · ");
+          filled.push("Invoice #");
+        }
+        return next;
+      });
+      setScanResult({ by: "ai", filled, notes: ai.notes || "" });
+      notify?.("Invoice read — please check the filled details before saving.");
+    } catch (aiErr) {
+      if (mediaType === "application/pdf") {
+        setScanResult({ by: "none", filled: [], notes: "PDF reading needs the AI scanner. Please fill the details manually." });
+      } else {
+        try {
+          const worker = await createWorker("eng", 1, {
+            logger: (m) => { if (m.status === "recognizing text") setScanProgress(Math.round((m.progress || 0) * 100)); },
+          });
+          const { data } = await worker.recognize(dataUrl);
+          await worker.terminate();
+          const parsed = parseReceiptText(data.text || "");
+          const filled = [];
+          setForm((f) => {
+            const next = { ...f };
+            if (parsed.vendor) { next.vendor = parsed.vendor; filled.push("Vendor"); }
+            if (parsed.amount !== "") { next.amount = parsed.amount; filled.push("Amount"); }
+            if (parsed.date) { next.date = parsed.date; filled.push("Date"); }
+            if (parsed.description) { next.description = parsed.description; filled.push("Description"); }
+            return next;
+          });
+          setScanResult({ by: "basic", filled, notes: "" });
+        } catch (err) {
+          setScanResult({ by: "none", filled: [], notes: "Couldn't read this receipt. Please fill the details manually." });
+        }
+      }
     } finally {
       setScanning(false);
       setScanProgress(0);
@@ -2432,24 +2674,31 @@ function ExpenseModal({ headers, initial, onClose, onSave, headerStats, expenses
 
   const onImageChange = (e) => {
     const file = e.target.files?.[0];
+    e.target.value = "";
     if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      notify?.("Please attach an image file.", "error");
+    const isPdf = file.type === "application/pdf";
+    if (!file.type.startsWith("image/") && !isPdf) {
+      notify?.("Please attach a photo or a PDF of the invoice.", "error");
       return;
     }
-    if (file.size > MAX_IMAGE_BYTES) {
-      notify?.("Image is too large — please attach a file under 1.5MB.", "error");
-      return;
-    }
+    if (isPdf && file.size > MAX_PDF_BYTES) { notify?.("PDF is too large — please attach a file under 3MB.", "error"); return; }
+    if (!isPdf && file.size > MAX_UPLOAD_BYTES) { notify?.("Photo is too large — please attach a file under 10MB.", "error"); return; }
     const reader = new FileReader();
-    reader.onload = () => {
-      setForm((f) => ({ ...f, imageData: reader.result, imageName: file.name }));
-      // Scan automatically as soon as the receipt is attached — no extra click needed.
-      scanReceipt(reader.result);
+    reader.onload = async () => {
+      if (isPdf) {
+        // A PDF invoice is kept as the entry's document and read by the AI scanner.
+        setForm((f) => ({ ...f, documentData: reader.result, documentName: file.name, imageData: null, imageName: file.name }));
+        scanReceipt(reader.result);
+      } else {
+        const small = await compressImage(reader.result);
+        setForm((f) => ({ ...f, imageData: small, imageName: file.name }));
+        // Scan automatically as soon as the receipt is attached — no extra click needed.
+        scanReceipt(small);
+      }
     };
     reader.readAsDataURL(file);
   };
-  const removeImage = () => setForm((f) => ({ ...f, imageData: null, imageName: "" }));
+  const removeImage = () => { setForm((f) => ({ ...f, imageData: null, imageName: "" })); setScanResult(null); };
 
 
   const MAX_DOC_BYTES = 3 * 1024 * 1024; // ~3MB
@@ -2470,10 +2719,12 @@ function ExpenseModal({ headers, initial, onClose, onSave, headerStats, expenses
     <Modal title={editingId ? "Edit Expense" : "Add Expense"} onClose={onClose} wide>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4">
         <div className="sm:col-span-2">
-          {form.imageData ? (
+          {form.imageData || (form.imageName && form.documentData) ? (
             <div className="rounded-xl overflow-hidden mb-3" style={{ border: `1px solid ${C.border}` }}>
               <div className="flex items-center gap-3 px-3 py-2">
-                <img src={form.imageData} alt="Receipt preview" className="w-12 h-12 object-cover rounded-lg" />
+                {form.imageData
+                  ? <img src={form.imageData} alt="Receipt preview" className="w-12 h-12 object-cover rounded-lg" />
+                  : <div className="w-12 h-12 rounded-lg flex items-center justify-center" style={{ background: C.bg }}><FileText size={20} color={C.muted} /></div>}
                 <span className="text-xs flex-1 truncate" style={{ color: C.muted }}>{form.imageName}</span>
                 <button type="button" onClick={removeImage} className="p-1.5 rounded-lg hover:bg-gray-100">
                   <X size={14} color={C.muted} />
@@ -2488,13 +2739,28 @@ function ExpenseModal({ headers, initial, onClose, onSave, headerStats, expenses
                     className="inline-block h-3.5 w-3.5 rounded-full border-2 animate-spin"
                     style={{ borderColor: `${C.muted} transparent ${C.muted} ${C.muted}` }}
                   />
-                  Scanning receipt… {scanProgress}% — filling in details automatically
+                  Reading invoice{scanProgress ? `… ${scanProgress}%` : "…"} — filling in details automatically
+                </div>
+              )}
+              {!scanning && scanResult && (
+                <div className="px-4 py-2.5 text-xs" style={{
+                  background: scanResult.by === "ai" ? "#EAF0F9" : scanResult.by === "basic" ? "#FFF6EC" : C.redLight,
+                  color: scanResult.by === "none" ? "#7A241E" : C.text, borderTop: `1px solid ${C.border}`,
+                }}>
+                  {scanResult.by === "ai" && (
+                    <><span className="font-semibold">✓ Read by AI scanner.</span> {scanResult.filled.length ? `Filled: ${scanResult.filled.join(", ")}.` : "Nothing could be read."} Please check before saving.</>
+                  )}
+                  {scanResult.by === "basic" && (
+                    <><span className="font-semibold">Basic scan used</span> (AI scanner not available). {scanResult.filled.length ? `Filled: ${scanResult.filled.join(", ")}.` : "Nothing could be read."} Please check carefully.</>
+                  )}
+                  {scanResult.by === "none" && <span className="font-semibold">{scanResult.notes}</span>}
+                  {scanResult.by !== "none" && scanResult.notes && <div className="mt-1" style={{ color: C.muted }}>Note: {scanResult.notes}</div>}
                 </div>
               )}
               {!scanning && (
                 <button
                   type="button"
-                  onClick={() => scanReceipt(form.imageData)}
+                  onClick={() => scanReceipt(form.imageData || form.documentData)}
                   className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-semibold"
                   style={{ background: C.accent, color: C.text, borderTop: `1px solid ${C.border}` }}
                 >
@@ -2512,11 +2778,11 @@ function ExpenseModal({ headers, initial, onClose, onSave, headerStats, expenses
               <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: C.accent }}>
                 <Search size={18} color={C.text} />
               </div>
-              <div className="text-sm font-semibold" style={{ color: C.text }}>Scan a Receipt</div>
+              <div className="text-sm font-semibold" style={{ color: C.text }}>Scan an Invoice / Receipt</div>
               <div className="text-[11px]" style={{ color: C.muted }}>
-                Snap or upload a photo — vendor, amount and date fill in automatically
+                Take a photo or upload an image / PDF — vendor, amount, date, header and segment fill in automatically
               </div>
-              <input id="receipt-scan-input" type="file" accept="image/*" onChange={onImageChange} className="hidden" />
+              <input id="receipt-scan-input" type="file" accept="image/*,application/pdf" onChange={onImageChange} className="hidden" />
             </label>
           )}
         </div>
